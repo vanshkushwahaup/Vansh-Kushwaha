@@ -1,0 +1,50 @@
+import os, urllib.parse, urllib.request, xml.etree.ElementTree as ET
+from getpass import getpass
+from openai import OpenAI
+
+# 1) pick your provider   2) paste your key
+c = input("1=Groq  2=Gemini  3=OpenAI  4=Sarvam : ").strip()
+P = {"1": ("https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
+     "2": ("https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-3.8-flash"),
+     "3": (None, "gpt-4o-mini"),
+     "4": ("https://api.sarvam.ai/v2", "sarvam-105b")}
+base, model = P.get(c, (None, "gpt-4o-mini"))
+key = getpass("Paste your API key: ").strip()
+client = OpenAI(api_key=key, **({"base_url": base} if base else {}))
+
+
+def llm(system, user):
+    r = client.chat.completions.create(model=model, temperature=0.7,
+        messages=[{"role": "system", "content": system},
+                  {"role": "user", "content": user}])
+    return r.choices[0].message.content or ""
+
+
+def search(q, k=5):
+    u = ("http://export.arxiv.org/api/query?search_query="
+         + urllib.parse.quote("all:" + q) + f"&max_results={k}&sortBy=relevance")
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    try:
+        root = ET.fromstring(urllib.request.urlopen(u, timeout=20).read().decode())
+        return "\n".join("- " + " ".join(e.find("a:title", ns).text.split())
+                         + " (" + e.find("a:published", ns).text[:4] + ")"
+                         for e in root.findall("a:entry", ns))
+    except Exception as e:
+        return "(search failed: " + str(e) + ")"
+
+
+def discover(question):
+    known = llm("You are a research librarian. Be concise, never invent citations.",
+                "Question: " + question + "\n\nRecent papers:\n" + search(question)
+                + "\n\nWrite what is known, then 3 open gaps.")
+    print("\n=== KNOWN & GAPS ===\n" + known)
+    ideas = llm("You are a rigorous scientist. Give testable, falsifiable hypotheses.",
+                "Question: " + question + "\n" + known + "\n\nGive 5 hypotheses, numbered.")
+    print("\n=== HYPOTHESES ===\n" + ideas)
+    crit = llm("You are a harsh peer reviewer. Find flaws. Do not be generous.",
+               "Question: " + question + "\nHypotheses:\n" + ideas
+               + "\n\nScore each 1-5 on novelty, soundness, feasibility, then pick the best.")
+    print("\n=== CRITIQUE ===\n" + crit)
+
+
+discover("Why do some RNA-binding proteins form condensates under heat stress?")
